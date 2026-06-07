@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Browse Hub</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="hero">
+      <div class="logo-block">
+        <button id="themeToggle" class="logo-button" aria-label="切换主题" title="点击切换主题">
+          <span class="logo-core"></span>
+          <span class="logo-ring"></span>
+          <span class="logo-ring ring-2"></span>
+        </button>
+        <div class="theme-hint">点击切换主题</div>
+      </div>
+      <div class="hero-copy">
+        <p class="eyebrow">terminal style · deepseek · local http</p>
+        <h1>AI 终端面板</h1>
+        <p class="subcopy">黑灰终端风格，左侧显示 AI 回复，右侧保留用户输入与决策状态。</p>
+      </div>
+    </header>
+
+    <main class="main-grid">
+      <section class="chat-card">
+        <div class="chat-header">
+          <div>
+            <h2>对话区</h2>
+            <p>用户消息在右侧，AI 回复在左侧，风格尽量像终端输出。</p>
+          </div>
+          <div id="serverState" class="server-state">HTTP 服务已启动</div>
+        </div>
+
+        <div id="messageList" class="message-list" aria-live="polite"></div>
+
+        <div class="composer">
+          <input id="promptInput" type="text" placeholder="输入问题，回车或点按钮发送" />
+          <button id="sendNormal" class="send-btn normal">发送消息</button>
+        </div>
+      </section>
+
+      <aside class="side-panel">
+        <section class="panel-card">
+          <h3>history.json</h3>
+          <pre id="historyPreview">加载中...</pre>
+        </section>
+        <section class="panel-card">
+          <h3>决策</h3>
+          <div id="decisionLog" class="decision-log"></div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
