@@ -19,7 +19,7 @@ OCR_EXE_PATH = r"C:\Users\Administrator\Desktop\Umi-OCR_Rapid_v2.1.5\Umi-OCR.exe
 OCR_OUTPUT_PATH = os.path.join(WORKSPACE_DIR, "ocr_result.txt")
 
 ADB_PATH = "adb"
-LOOP_INTERVAL_SECONDS = 10
+LOOP_INTERVAL_SECONDS = 300
 
 HOST = "127.0.0.1"
 PORT = 8000
