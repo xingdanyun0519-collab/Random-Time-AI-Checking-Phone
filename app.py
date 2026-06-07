@@ -16,7 +16,7 @@ PORT = 8000
 BASE_URL = f"http://{HOST}:{PORT}"
 
 MODEL_NAME = "deepseek-v4-pro"
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "xxxxxxxxx")
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "sk-3f7d3786669d4a88be6566e78b519840")
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 AUTOMATION_PAUSED = True
