@@ -8,6 +8,8 @@ const historyPreview = document.getElementById("historyPreview");
 const serverState = document.getElementById("serverState");
 const themeToggle = document.getElementById("themeToggle");
 const decisionLog = document.getElementById("decisionLog");
+let lastAutomationEventId = 0;
+const decisionLines = [];
 
 function applyTheme(name) {
   document.body.className = `theme-${name}`;
@@ -41,8 +43,8 @@ function appendMessage(mode, text, source = "AI") {
 }
 
 function appendDecisionLog(text) {
-  const time = new Date().toLocaleTimeString("zh-CN", { hour12: false });
-  decisionLog.textContent = `[${time}] 决策状态\n${text}`;
+  decisionLines.push(text);
+  decisionLog.textContent = decisionLines.join("\n");
   decisionLog.scrollTop = decisionLog.scrollHeight;
 }
 
@@ -56,12 +58,39 @@ async function fetchHistory() {
   }
 }
 
+async function fetchState() {
+  try {
+    const response = await fetch("/api/state");
+    const state = await response.json();
+
+    if (typeof state.history_count === "number") {
+      serverState.textContent = state.automation_running
+        ? `自动化运行中 · history ${state.history_count}`
+        : `自动化待机 · history ${state.history_count}`;
+    }
+
+    if (state.event_id && state.event_id !== lastAutomationEventId) {
+      lastAutomationEventId = state.event_id;
+      if (state.status_line) {
+        appendDecisionLog(state.status_line);
+      }
+      if (state.event_type === "decision") {
+        appendMessage("decision", state.event_text || "[空决策]", "AI");
+      } else if (state.event_type === "ocr") {
+        appendMessage("normal", state.event_text || "[空 OCR]", "AI");
+      }
+    }
+  } catch (error) {
+    serverState.textContent = `状态获取失败: ${error}`;
+  }
+}
+
 async function sendMessage(mode) {
   const prompt = promptInput.value.trim();
   if (!prompt) return;
 
   appendMessage("normal", prompt, "USER");
-  appendDecisionLog(`收到用户消息，正在等待 AI 回复。`);
+  appendDecisionLog(`[${new Date().toLocaleTimeString("zh-CN", { hour12: false })}] 收到用户消息，正在等待 AI 回复。`);
   promptInput.value = "";
   serverState.textContent = "正在等待 Python/API 回复...";
 
@@ -74,12 +103,12 @@ async function sendMessage(mode) {
 
     const data = await response.json();
     appendMessage("normal", data.reply || "[空回复]", "AI");
-    appendDecisionLog(`AI 决策完成。\n${data.reply || "[空回复]"}`);
+    appendDecisionLog(`[${new Date().toLocaleTimeString("zh-CN", { hour12: false })}] AI 回复完成：${data.reply || "[空回复]"}`);
     serverState.textContent = "回复已更新";
     await fetchHistory();
   } catch (error) {
     appendMessage("normal", `请求失败: ${error}`, "AI");
-    appendDecisionLog(`请求失败：${error}`);
+    appendDecisionLog(`[${new Date().toLocaleTimeString("zh-CN", { hour12: false })}] 请求失败：${error}`);
     serverState.textContent = "请求失败";
   }
 }
@@ -94,5 +123,7 @@ promptInput.addEventListener("keydown", (event) => {
 
 applyTheme(themes[themeIndex]);
 appendMessage("normal", "网页已启动。这里会显示 AI 回复。", "AI");
-appendDecisionLog("网页已自动打开。自动化循环当前暂停，等待下一步指令。");
+appendDecisionLog(`[${new Date().toLocaleTimeString("zh-CN", { hour12: false })}] 网页已自动打开。自动化循环当前暂停，等待下一步指令。`);
 fetchHistory();
+fetchState();
+setInterval(fetchState, 2000);

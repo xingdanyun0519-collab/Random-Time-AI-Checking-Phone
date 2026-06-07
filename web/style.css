@@ -212,6 +212,7 @@ body::after {
   display: grid;
   grid-template-columns: 1.45fr 0.72fr;
   gap: 18px;
+  align-items: stretch;
 }
 
 .chat-card,
@@ -368,11 +369,20 @@ body::after {
 .side-panel {
   display: grid;
   gap: 18px;
+  height: 72vh;
+  grid-template-rows: 1fr 1fr;
+}
+
+.side-panel .panel-card {
+  height: 100%;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
 }
 
 .panel-card pre {
   margin: 12px 0 0;
-  max-height: 290px;
   overflow: auto;
   padding: 14px;
   border-radius: 16px;
@@ -380,13 +390,12 @@ body::after {
   border: 1px solid rgba(255, 255, 255, 0.08);
   white-space: pre-wrap;
   color: var(--text);
+  min-height: 0;
 }
 
 .decision-log {
   margin-top: 12px;
   padding: 14px;
-  min-height: 180px;
-  max-height: 280px;
   overflow-y: auto;
   border-radius: 16px;
   background: rgba(255,255,255,0.04);
@@ -395,6 +404,7 @@ body::after {
   white-space: pre-wrap;
   line-height: 1.8;
   color: var(--text);
+  min-height: 0;
 }
 
 @media (max-width: 1100px) {
