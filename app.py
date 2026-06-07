@@ -1,6 +1,8 @@
 import json
 import os
 import random
+import re
+import shutil
 import subprocess
 import threading
 import time
@@ -14,12 +16,17 @@ from openai import OpenAI
 WORKSPACE_DIR = r"C:\Users\Administrator\Desktop\p"
 WEB_DIR = os.path.join(WORKSPACE_DIR, "web")
 HISTORY_PATH = os.path.join(WORKSPACE_DIR, "history.json")
+CHAT_PATH = os.path.join(WORKSPACE_DIR, "chat.json")
 SCREENSHOT_PATH = os.path.join(WORKSPACE_DIR, "screen.png")
 OCR_EXE_PATH = r"C:\Users\Administrator\Desktop\Umi-OCR_Rapid_v2.1.5\Umi-OCR.exe"
 OCR_OUTPUT_PATH = os.path.join(WORKSPACE_DIR, "ocr_result.txt")
 
 ADB_PATH = "adb"
-LOOP_INTERVAL_SECONDS = 300
+INITIAL_LOOP_INTERVAL_SECONDS = 0
+DEFAULT_NEXT_CHECK_SECONDS = 300
+NO_TEXT_NEXT_CHECK_SECONDS = 300
+MIN_LOOP_INTERVAL_SECONDS = 30
+MAX_LOOP_INTERVAL_SECONDS = 1800
 
 HOST = "127.0.0.1"
 PORT = 8000
@@ -63,8 +70,7 @@ NON_STUDY_PACKAGES = [
     "ai.perplexity.app.android",
 ]
 
-# 用于用户对话的消息历史（仅用户↔AI对话）
-CHAT_HISTORY = []
+# 用于用户对话的消息历史（仅用户↔AI对话，落盘到 chat.json）
 CHAT_LOCK = threading.Lock()
 
 # ─────────────────────────────────────────────
@@ -72,11 +78,12 @@ CHAT_LOCK = threading.Lock()
 # ─────────────────────────────────────────────
 
 SUPERVISOR_SYSTEM_PROMPT = (
-    "你是用户的AI监督dom。用户16岁，极度跳脱，会撒娇、耍赖、岔开话题、用表情包攻击你。\n"
+    "你是用户的AI监督dom。用户，极度跳脱，会撒娇、耍赖、岔开话题、用表情包攻击你。\n"
     "当你收到截图OCR文字时，判断用户是否在学习（看教材/做题/看学习类内容）。\n"
     "第一行只回答 学习 或 摸鱼。\n"
-    "如果是摸鱼，第二行给用户写一句有力度的中文催促语（不超过30字，可以带emoji，可以命令）。"
-
+    "第二行只回答一个数字，表示下一次截图检查要等多少秒。\n"
+    "如果用户明显在摸鱼，数字要小；如果用户在稳定学习，数字可以大一些。\n"
+    "第三行给用户写一句简洁中文回应（不超过30字，可以带emoji，可以命令）。"
 )
 
 DECISION_SYSTEM_PROMPT = (
@@ -106,6 +113,14 @@ def terminal_line(message):
     return f"[{now_time()}] {message}"
 
 
+def quote_command_path(path):
+    if not path:
+        return path
+    if path.startswith('"') and path.endswith('"'):
+        return path
+    return f'"{path}"' if " " in path else path
+
+
 def run_command(command, capture_output=False):
     try:
         result = subprocess.run(
@@ -126,11 +141,66 @@ def run_command(command, capture_output=False):
     return None
 
 
+def resolve_adb_path():
+    if os.path.isabs(ADB_PATH) and os.path.exists(ADB_PATH):
+        return ADB_PATH
+
+    found = shutil.which(ADB_PATH)
+    if found:
+        return found
+
+    try:
+        result = subprocess.run(
+            ["cmd", "/c", "where", "adb"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        for line in (result.stdout or "").splitlines():
+            candidate = line.strip()
+            if candidate and os.path.exists(candidate):
+                return candidate
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    common_paths = [
+        os.path.join(local_app_data, "Android", "Sdk", "platform-tools", "adb.exe"),
+        r"C:\Android\platform-tools\adb.exe",
+        r"C:\platform-tools\adb.exe",
+    ]
+    for candidate in common_paths:
+        if candidate and os.path.exists(candidate):
+            return candidate
+
+    return ADB_PATH
+
+
+def adb_base_command():
+    return quote_command_path(ADB_PATH)
+
+
 def adb_command(args):
-    prefix = ADB_PATH
+    prefix = adb_base_command()
     if ADB_SERIAL:
-        prefix = f"{ADB_PATH} -s {ADB_SERIAL}"
+        prefix = f"{adb_base_command()} -s {ADB_SERIAL}"
     return f"{prefix} {args}"
+
+
+def get_connected_devices():
+    """Return adb serials in `device` state, ignoring adb warnings/noise."""
+    output = run_command(f"{adb_base_command()} devices", capture_output=True) or ""
+    devices = []
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("*") or line.lower().startswith("list of devices"):
+            continue
+
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "device":
+            devices.append(parts[0])
+
+    return devices
 
 
 # ─────────────────────────────────────────────
@@ -144,6 +214,13 @@ def ensure_history_file():
         json.dump([], f, ensure_ascii=False, indent=2)
 
 
+def ensure_chat_file():
+    if os.path.exists(CHAT_PATH):
+        return
+    with open(CHAT_PATH, "w", encoding="utf-8") as f:
+        json.dump([], f, ensure_ascii=False, indent=2)
+
+
 def load_history():
     ensure_history_file()
     try:
@@ -154,6 +231,85 @@ def load_history():
     except (OSError, json.JSONDecodeError):
         pass
     return []
+
+
+def load_chat_history():
+    ensure_chat_file()
+    try:
+        with open(CHAT_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return data
+    except (OSError, json.JSONDecodeError):
+        pass
+    return []
+
+
+def save_chat_history(items):
+    with open(CHAT_PATH, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=2)
+
+
+def next_chat_id(history):
+    numeric_ids = [item.get("id") for item in history if isinstance(item, dict) and isinstance(item.get("id"), int)]
+    return (max(numeric_ids) + 1) if numeric_ids else 1
+
+
+def append_chat_message(role, content, source="chat"):
+    with CHAT_LOCK:
+        history = load_chat_history()
+        record = {
+            "id": next_chat_id(history),
+            "role": role,
+            "content": content,
+            "source": source,
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        history.append(record)
+        save_chat_history(history)
+        return record
+
+
+def seed_chat_history():
+    with CHAT_LOCK:
+        history = load_chat_history()
+        if history:
+            return
+        history.append(
+            {
+                "id": 1,
+                "role": "assistant",
+                "content": "监督系统已就绪。需要我看着你学习，或者你也可以直接问我。",
+                "source": "seed",
+                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
+        save_chat_history(history)
+
+
+def update_chat_message(message_id, content):
+    with CHAT_LOCK:
+        history = load_chat_history()
+        changed = False
+        for item in history:
+            if isinstance(item, dict) and item.get("id") == message_id:
+                item["content"] = content
+                item["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                changed = True
+                break
+        if changed:
+            save_chat_history(history)
+        return changed
+
+
+def delete_chat_message(message_id):
+    with CHAT_LOCK:
+        history = load_chat_history()
+        new_history = [item for item in history if not (isinstance(item, dict) and item.get("id") == message_id)]
+        if len(new_history) == len(history):
+            return False
+        save_chat_history(new_history)
+        return True
 
 
 def append_history_record(text):
@@ -206,16 +362,20 @@ def call_ai_chat(user_message):
         return "请先设置有效的 DEEPSEEK_API_KEY。"
 
     with CHAT_LOCK:
-        history_snapshot = list(CHAT_HISTORY)
+        history_snapshot = list(load_chat_history())
 
-    history_text = json.dumps(load_history(), ensure_ascii=False, indent=2)
+    history_text = json.dumps(load_chat_history(), ensure_ascii=False, indent=2)
     system_with_history = (
         f"{CHAT_SYSTEM_PROMPT}\n\n"
-        f"以下是手机屏幕OCR历史记录，供你了解用户近期在做什么：\n{history_text}"
+        f"以下是对话历史记录，供你了解用户近期在做什么：\n{history_text}"
     )
 
     messages = [{"role": "system", "content": system_with_history}]
-    messages.extend(history_snapshot)
+    messages.extend(
+        {"role": item.get("role", "user"), "content": item.get("content", "")}
+        for item in history_snapshot
+        if isinstance(item, dict) and item.get("content")
+    )
     messages.append({"role": "user", "content": user_message})
 
     response = client.chat.completions.create(
@@ -225,13 +385,8 @@ def call_ai_chat(user_message):
     )
     reply = (response.choices[0].message.content or "").strip() or "[空回复]"
 
-    # 把本轮追加进对话历史
-    with CHAT_LOCK:
-        CHAT_HISTORY.append({"role": "user", "content": user_message})
-        CHAT_HISTORY.append({"role": "assistant", "content": reply})
-        # 保留最近 20 轮（40 条）
-        if len(CHAT_HISTORY) > 40:
-            CHAT_HISTORY[:] = CHAT_HISTORY[-40:]
+    append_chat_message("user", user_message, source="chat")
+    append_chat_message("assistant", reply, source="ai")
 
     return reply
 
@@ -251,7 +406,9 @@ def build_decision_prompt():
 def build_ocr_judge_prompt(ocr_text):
     return (
         f"以下是刚刚截图的OCR文字：\n{ocr_text}\n\n"
-        "用户是在学习还是在摸鱼？"
+        "用户是在学习还是在摸鱼？\n"
+        "下一次看是什么时候？第二行回车输入数字，单位是秒。\n"
+        "第三行输入给用户的简洁回答。"
     )
 
 
@@ -260,15 +417,24 @@ def is_yes_reply(reply):
     return first.startswith("是") or first.startswith("yes") or first.startswith("y")
 
 
+def parse_interval_seconds(text):
+    match = re.search(r"\d+", text or "")
+    if not match:
+        return DEFAULT_NEXT_CHECK_SECONDS
+    seconds = int(match.group(0))
+    return max(MIN_LOOP_INTERVAL_SECONDS, min(MAX_LOOP_INTERVAL_SECONDS, seconds))
+
+
 def parse_ocr_judge(reply):
-    """返回 (is_studying: bool, warn_message: str)"""
+    """返回 (is_studying: bool, next_interval_seconds: int, message: str)"""
     lines = [l.strip() for l in reply.strip().splitlines() if l.strip()]
     first = lines[0] if lines else ""
     is_studying = first.startswith("学习")
-    warn_msg = lines[1] if len(lines) > 1 and not is_studying else ""
-    if not is_studying and not warn_msg:
-        warn_msg = "📵 检测到摸鱼，已关闭娱乐应用，快去学习！"
-    return is_studying, warn_msg
+    next_interval = parse_interval_seconds(lines[1] if len(lines) > 1 else "")
+    message = lines[2] if len(lines) > 2 else ""
+    if not message:
+        message = "继续，别停。" if is_studying else "📵 别摸鱼，回去学习！"
+    return is_studying, next_interval, message
 
 
 # ─────────────────────────────────────────────
@@ -303,6 +469,13 @@ def perform_ocr():
     return (ocr_console or "").strip()
 
 
+def is_no_text_ocr_result(ocr_text):
+    text = (ocr_text or "").strip()
+    if not text:
+        return True
+    return text == "[Message] No text in OCR result."
+
+
 def kill_non_study_apps():
     for pkg in NON_STUDY_PACKAGES:
         run_command(adb_command(f"shell am force-stop {pkg}"))
@@ -331,59 +504,16 @@ def push_sys_message(text):
     with STATE_LOCK:
         APP_STATE["sys_msg_id"] += 1
         APP_STATE["sys_msg_text"] = text
+    append_chat_message("system", text, source="system")
 
 
 def get_state_snapshot():
     with STATE_LOCK:
         snapshot = dict(APP_STATE)
         snapshot["history_count"] = len(load_history())
+        snapshot["chat_count"] = len(load_chat_history())
         snapshot["automation_running"] = bool(ADB_SERIAL)
         return snapshot
-
-
-# ─────────────────────────────────────────────
-# 设备连接（先于 HTTP server 运行）
-# ─────────────────────────────────────────────
-
-def get_connected_devices():
-    output = run_command(f"{ADB_PATH} devices", capture_output=True)
-    if not output:
-        return []
-    devices = []
-    for line in output.splitlines():
-        line = line.strip()
-        if not line or line.startswith("List of devices attached"):
-            continue
-        parts = line.split()
-        if len(parts) >= 2 and parts[1] == "device":
-            devices.append(parts[0])
-    return devices
-
-
-def try_connect_wifi(port):
-    """扫描 192.168.1.1~254，尝试用给定端口连接，返回第一个成功的 serial"""
-    print(f"未检测到已连接设备，开始扫描局域网 192.168.1.x:{port} ...")
-    run_command(f"{ADB_PATH} disconnect", capture_output=True)
-    time.sleep(0.5)
-
-    found = None
-    for i in range(1, 255):
-        ip = f"192.168.1.{i}"
-        result = run_command(f"{ADB_PATH} connect {ip}:{port}", capture_output=True)
-        if result and ("connected" in result.lower()) and ("unable" not in result.lower()) and ("failed" not in result.lower()):
-            # 确认设备确实出现在 devices 列表
-            devices = get_connected_devices()
-            target = f"{ip}:{port}"
-            if target in devices:
-                print(f"✓ 连接成功：{target}")
-                found = target
-                break
-            else:
-                run_command(f"{ADB_PATH} disconnect {ip}:{port}", capture_output=True)
-
-    if not found:
-        print(f"扫描完毕，未找到任何在 :{port} 监听的设备。")
-    return found
 
 
 def select_device_or_connect():
@@ -405,22 +535,38 @@ def select_device_or_connect():
         print(f"使用设备：{ADB_SERIAL}")
         return
 
-    # 无已连接设备，要求输入端口并自动扫描
+    # 无已连接设备，要求输入设备地址
     while True:
-        port = input("请输入手机无线调试端口（5位数字）: ").strip()
-        if not port.isdigit() or len(port) != 5:
-            print("错误：端口必须是5位数字，请重试。")
+        addr = input("请输入设备地址 (格式: 192.168.1.x:yyyyy 或直接输入 x:yyyyy): ").strip()
+        
+        # 如果只输入了 x:port，自动补全
+        if addr.startswith("192.168.1."):
+            target = addr
+        elif ":" in addr and addr.split(":")[0].isdigit():
+            target = f"192.168.1.{addr}"
+        else:
+            print("错误：格式不正确。请输入如 145:38883 或完整的 192.168.1.145:38883")
             continue
-        serial = try_connect_wifi(port)
-        if serial:
-            ADB_SERIAL = serial
-            return
-        retry = input("扫描失败，是否重试？(y/n): ").strip().lower()
+        
+        # 如果 target 已经在设备列表里，先断开再重连
+        if target in get_connected_devices():
+            run_command(f"{adb_base_command()} disconnect {target}", capture_output=True)
+            time.sleep(0.3)
+        
+        # 尝试连接
+        result = run_command(f"{adb_base_command()} connect {target}", capture_output=True)
+        if result and "connected" in result.lower():
+            devices = get_connected_devices()
+            if target in devices:
+                print(f"✓ 连接成功：{target}")
+                ADB_SERIAL = target
+                return
+        
+        print(f"连接失败：{target}")
+        retry = input("是否重试？(y/n): ").strip().lower()
         if retry != "y":
             print("跳过设备连接，自动化功能不可用。")
             return
-
-
 # ─────────────────────────────────────────────
 # 主自动化循环
 # ─────────────────────────────────────────────
@@ -429,8 +575,10 @@ def automation_loop():
     with STATE_LOCK:
         APP_STATE["automation_running"] = True
 
+    next_interval_seconds = INITIAL_LOOP_INTERVAL_SECONDS
     while True:
-        time.sleep(LOOP_INTERVAL_SECONDS)
+        if next_interval_seconds > 0:
+            time.sleep(next_interval_seconds)
         try:
             # Step 1: AI 决策要不要截图
             decision_reply = call_ai_simple(DECISION_SYSTEM_PROMPT, build_decision_prompt())
@@ -445,9 +593,14 @@ def automation_loop():
             take_screenshot()
             ocr_text = perform_ocr()
 
-            # Step 3: 无文字 = 锁屏中，跳过
-            if not ocr_text or not ocr_text.strip():
-                update_state("status", "锁屏中，跳过", terminal_line("OCR无文字：锁屏中，跳过"))
+            # Step 3: 无文字 = 手机没开机/无内容，按学习态处理
+            if is_no_text_ocr_result(ocr_text):
+                next_interval_seconds = NO_TEXT_NEXT_CHECK_SECONDS
+                update_state(
+                    "status",
+                    f"手机没开机或无内容，{next_interval_seconds} 秒后再看",
+                    terminal_line(f"OCR无文字：手机没开机或无内容，{next_interval_seconds} 秒后再看"),
+                )
                 continue
 
             # Step 4: 有文字，让 AI 判断是不是在学习
@@ -455,16 +608,24 @@ def automation_loop():
             update_state("ocr", ocr_text, terminal_line(f"OCR：{ocr_text[:50]}"))
 
             judge_reply = call_ai_simple(SUPERVISOR_SYSTEM_PROMPT, build_ocr_judge_prompt(ocr_text))
-            is_studying, warn_msg = parse_ocr_judge(judge_reply)
+            is_studying, next_interval_seconds, user_message = parse_ocr_judge(judge_reply)
             update_state("judge", judge_reply, terminal_line(f"判断：{judge_reply.splitlines()[0]}"))
 
             if is_studying:
-                update_state("status", "用户在学习，继续监督", terminal_line("判断：学习中 ✓，进入下一轮"))
+                update_state(
+                    "status",
+                    f"用户在学习，{next_interval_seconds} 秒后再看",
+                    terminal_line(f"判断：学习中，{next_interval_seconds} 秒后再看"),
+                )
                 continue
 
             # Step 5: 摸鱼 → 推系统消息 + 关App + 锁屏
-            push_sys_message(warn_msg)
-            update_state("warn", warn_msg, terminal_line(f"摸鱼警告：{warn_msg}"))
+            push_sys_message(f"{user_message}\n{next_interval_seconds} 秒后再看")
+            update_state(
+                "warn",
+                user_message,
+                terminal_line(f"摸鱼警告：{user_message}；{next_interval_seconds} 秒后再看"),
+            )
 
             time.sleep(0.5)
             kill_non_study_apps()
@@ -499,35 +660,93 @@ class AppHandler(SimpleHTTPRequestHandler):
         if self.path == "/api/history":
             self._send_json(load_history())
             return
+        if self.path == "/api/chat-history":
+            self._send_json(load_chat_history())
+            return
         if self.path == "/api/state":
             self._send_json(get_state_snapshot())
             return
         super().do_GET()
 
     def do_POST(self):
-        if self.path != "/api/chat":
+        if self.path == "/api/chat":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length).decode("utf-8") if length else "{}"
+                payload = json.loads(body)
+            except (ValueError, json.JSONDecodeError):
+                self._send_json({"error": "Invalid JSON"}, status=400)
+                return
+
+            prompt = str(payload.get("prompt", "")).strip()
+            if not prompt:
+                self._send_json({"error": "Prompt is empty"}, status=400)
+                return
+
+            try:
+                reply = call_ai_chat(prompt)
+            except Exception as error:
+                self._send_json({"error": str(error)}, status=500)
+                return
+
+            self._send_json({"reply": reply})
+            return
+
+        if self.path == "/api/chat-history":
             self._send_json({"error": "Not found"}, status=404)
             return
+
+        self._send_json({"error": "Not found"}, status=404)
+        return
+
+    def do_PUT(self):
+        self._handle_chat_history_mutation("PUT")
+
+    def do_DELETE(self):
+        self._handle_chat_history_mutation("DELETE")
+
+    def _handle_chat_history_mutation(self, method):
+        if not self.path.startswith("/api/chat-history/"):
+            self._send_json({"error": "Not found"}, status=404)
+            return
+
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            body = self.rfile.read(length).decode("utf-8") if length else "{}"
-            payload = json.loads(body)
-        except (ValueError, json.JSONDecodeError):
-            self._send_json({"error": "Invalid JSON"}, status=400)
+            message_id = int(self.path.rsplit("/", 1)[-1])
+        except ValueError:
+            self._send_json({"error": "Invalid message id"}, status=400)
             return
 
-        prompt = str(payload.get("prompt", "")).strip()
-        if not prompt:
-            self._send_json({"error": "Prompt is empty"}, status=400)
+        if method == "DELETE":
+            ok = delete_chat_message(message_id)
+            if not ok:
+                self._send_json({"error": "Message not found"}, status=404)
+                return
+            self._send_json({"ok": True})
             return
 
-        try:
-            reply = call_ai_chat(prompt)
-        except Exception as error:
-            self._send_json({"error": str(error)}, status=500)
+        if method == "PUT":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length).decode("utf-8") if length else "{}"
+                payload = json.loads(body)
+            except (ValueError, json.JSONDecodeError):
+                self._send_json({"error": "Invalid JSON"}, status=400)
+                return
+
+            content = str(payload.get("content", "")).strip()
+            if not content:
+                self._send_json({"error": "Content is empty"}, status=400)
+                return
+
+            ok = update_chat_message(message_id, content)
+            if not ok:
+                self._send_json({"error": "Message not found"}, status=404)
+                return
+
+            self._send_json({"ok": True})
             return
 
-        self._send_json({"reply": reply})
+        self._send_json({"error": "Not found"}, status=404)
 
 
 def start_server():
@@ -542,7 +761,13 @@ def start_server():
 # ─────────────────────────────────────────────
 
 def main():
+    global ADB_PATH
+
     ensure_history_file()
+    ensure_chat_file()
+    seed_chat_history()
+    ADB_PATH = resolve_adb_path()
+    print(f"ADB路径：{ADB_PATH}")
 
     # ① 先完成设备连接（阻塞，在终端交互）
     select_device_or_connect()

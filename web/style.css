@@ -283,6 +283,41 @@ body::after {
   animation: rise 0.24s ease-out;
 }
 
+.message-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.message:hover .message-actions,
+.message:focus-within .message-actions {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.message.right .message-actions {
+  justify-content: flex-end;
+}
+
+.msg-action {
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.msg-action.danger {
+  border-color: rgba(231, 76, 60, 0.35);
+  color: #ffb7b7;
+  background: rgba(90, 20, 20, 0.45);
+}
+
 @keyframes rise {
   from {
     transform: translateY(10px);

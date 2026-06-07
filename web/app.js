@@ -9,58 +9,87 @@ function cycleTheme() {
 }
 
 // ─── DOM 引用 ────────────────────────────────────────
-const messageList   = document.getElementById("messageList");
-const promptInput   = document.getElementById("promptInput");
-const sendBtn       = document.getElementById("sendNormal");
+const messageList = document.getElementById("messageList");
+const promptInput = document.getElementById("promptInput");
+const sendBtn = document.getElementById("sendNormal");
 const historyPreview = document.getElementById("historyPreview");
-const serverState   = document.getElementById("serverState");
-const themeToggle   = document.getElementById("themeToggle");
-const decisionLog   = document.getElementById("decisionLog");
+const serverState = document.getElementById("serverState");
+const themeToggle = document.getElementById("themeToggle");
+const decisionLog = document.getElementById("decisionLog");
 
 // ─── 状态追踪 ─────────────────────────────────────────
-let lastEventId  = 0;
+let lastEventId = 0;
 let lastSysMsgId = 0;
-const logLines   = [];
+let chatCache = [];
+const logLines = [];
+
+function timeLabel(value) {
+  if (!value) return new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  const raw = String(value);
+  return raw.includes(" ") ? raw.split(" ")[1] : raw;
+}
+
+function sortById(items) {
+  return [...items].sort((a, b) => (a.id || 0) - (b.id || 0));
+}
 
 // ─── 消息渲染 ─────────────────────────────────────────
-// source: "USER" | "SYS" | "AI"
-// kind:   "chat" | "warn" | "sys" | "decision" | "ocr"
-function appendMessage(kind, text, source) {
-  const isUser = source === "USER";
-  const isSys  = source === "SYS";      // 自动化系统消息
+function renderChat(messages) {
+  messageList.innerHTML = "";
+  const sorted = sortById(messages);
 
-  const wrapper = document.createElement("div");
-  // 系统消息居中单独一行，用户靠右，AI靠左
-  wrapper.className = `message ${isUser ? "right" : isSys ? "center" : "left"}`;
+  for (const item of sorted) {
+    const role = item.role || "assistant";
+    const source = role === "user" ? "USER" : role === "system" ? "SYS" : "AI";
+    const isUser = source === "USER";
+    const isSys = source === "SYS";
 
-  const meta = document.createElement("div");
-  meta.className = "meta";
-  const t = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+    const wrapper = document.createElement("div");
+    wrapper.className = `message ${isUser ? "right" : isSys ? "center" : "left"}`;
+    wrapper.dataset.messageId = String(item.id || "");
 
-  if (isUser) {
-    meta.textContent = `[${t}] 你`;
-  } else if (isSys) {
-    meta.textContent = `[${t}] 系统`;
-    meta.style.color = "#e74c3c";
-  } else {
-    meta.textContent = `[${t}] AI 助手`;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `[${timeLabel(item.created_at)}] ${isUser ? "你" : isSys ? "系统" : "AI 助手"}`;
+    if (isSys) meta.style.color = "#e74c3c";
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = item.content || "";
+
+    if (isSys) {
+      bubble.style.background = "linear-gradient(135deg, #3d0f0f, #1e0808)";
+      bubble.style.border = "1px solid rgba(231,76,60,0.45)";
+      bubble.style.color = "#ff9999";
+      bubble.style.fontWeight = "600";
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "message-actions";
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "msg-action";
+    editBtn.textContent = "编辑";
+    editBtn.title = "编辑这条消息";
+    editBtn.addEventListener("click", () => editMessage(item));
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "msg-action danger";
+    deleteBtn.textContent = "删除";
+    deleteBtn.title = "删除这条消息";
+    deleteBtn.addEventListener("click", () => deleteMessage(item));
+
+    actions.appendChild(editBtn);
+    actions.appendChild(deleteBtn);
+
+    wrapper.appendChild(meta);
+    wrapper.appendChild(bubble);
+    wrapper.appendChild(actions);
+    messageList.appendChild(wrapper);
   }
 
-  const bubble = document.createElement("div");
-  bubble.className = "bubble";
-  bubble.textContent = text;
-
-  // 系统警告：红色气泡
-  if (isSys || kind === "warn") {
-    bubble.style.background = "linear-gradient(135deg, #3d0f0f, #1e0808)";
-    bubble.style.border      = "1px solid rgba(231,76,60,0.45)";
-    bubble.style.color       = "#ff9999";
-    bubble.style.fontWeight  = "600";
-  }
-
-  wrapper.appendChild(meta);
-  wrapper.appendChild(bubble);
-  messageList.appendChild(wrapper);
   messageList.scrollTop = messageList.scrollHeight;
 }
 
@@ -106,10 +135,20 @@ function showWarnBanner(text) {
   setTimeout(() => { if (banner.parentNode) banner.remove(); }, 12000);
 }
 
-// ─── 轮询 API ─────────────────────────────────────────
+async function fetchChatHistory() {
+  try {
+    const res = await fetch("/api/chat-history");
+    const data = await res.json();
+    chatCache = Array.isArray(data) ? data : [];
+    renderChat(chatCache);
+  } catch (e) {
+    historyPreview.textContent = `读取失败: ${e}`;
+  }
+}
+
 async function fetchHistory() {
   try {
-    const res  = await fetch("/api/history");
+    const res = await fetch("/api/history");
     const data = await res.json();
     historyPreview.textContent = JSON.stringify(data, null, 2);
   } catch (e) {
@@ -119,31 +158,64 @@ async function fetchHistory() {
 
 async function fetchState() {
   try {
-    const res   = await fetch("/api/state");
+    const res = await fetch("/api/state");
     const state = await res.json();
 
-    // 状态栏
     serverState.textContent = state.automation_running
-      ? `监督运行中 · ${state.history_count} 条记录`
-      : `待机 · ${state.history_count} 条记录`;
+      ? `监督运行中 · ${state.chat_count || 0} 条记录`
+      : `待机 · ${state.chat_count || 0} 条记录`;
 
-    // 自动化事件日志（decision log 区域）
     if (state.event_id && state.event_id !== lastEventId) {
       lastEventId = state.event_id;
       if (state.status_line) addLog(state.status_line);
     }
 
-    // 系统推送消息（对话区，红色气泡 + 顶部横幅）
     if (state.sys_msg_id && state.sys_msg_id !== lastSysMsgId) {
       lastSysMsgId = state.sys_msg_id;
       const msg = state.sys_msg_text || "📵 检测到摸鱼，快去学习！";
       showWarnBanner(msg);
-      appendMessage("warn", msg, "SYS");
       addLog(`[${new Date().toLocaleTimeString("zh-CN",{hour12:false})}] ⚠️ 系统警告：${msg}`);
-      await fetchHistory();
+      await fetchChatHistory();
     }
   } catch (e) {
     serverState.textContent = `状态获取失败: ${e}`;
+  }
+}
+
+async function reloadChat() {
+  await fetchChatHistory();
+  await fetchState();
+}
+
+async function deleteMessage(item) {
+  if (!item?.id) return;
+  const ok = confirm("确定删除这条消息吗？");
+  if (!ok) return;
+
+  try {
+    const res = await fetch(`/api/chat-history/${item.id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(await res.text());
+    await reloadChat();
+  } catch (e) {
+    alert(`删除失败: ${e}`);
+  }
+}
+
+async function editMessage(item) {
+  if (!item?.id) return;
+  const nextText = prompt("修改消息内容：", item.content || "");
+  if (nextText === null) return;
+
+  try {
+    const res = await fetch(`/api/chat-history/${item.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: nextText.trim() }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    await reloadChat();
+  } catch (e) {
+    alert(`修改失败: ${e}`);
   }
 }
 
@@ -152,25 +224,24 @@ async function sendMessage() {
   const text = promptInput.value.trim();
   if (!text) return;
 
-  appendMessage("chat", text, "USER");
   addLog(`[${new Date().toLocaleTimeString("zh-CN",{hour12:false})}] 用户发送：${text}`);
   promptInput.value = "";
   serverState.textContent = "等待 AI 回复…";
 
   try {
-    const res  = await fetch("/api/chat", {
+    const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prompt: text }),
     });
     const data = await res.json();
-    const reply = data.reply || "[空回复]";
-    appendMessage("chat", reply, "AI");
-    addLog(`[${new Date().toLocaleTimeString("zh-CN",{hour12:false})}] AI 回复：${reply.slice(0,60)}…`);
+    if (!res.ok) throw new Error(data.error || "请求失败");
+    await reloadChat();
+    addLog(`[${new Date().toLocaleTimeString("zh-CN",{hour12:false})}] AI 回复：${(data.reply || "[空回复]").slice(0,60)}…`);
     serverState.textContent = "就绪";
   } catch (e) {
-    appendMessage("chat", `请求失败: ${e}`, "AI");
     serverState.textContent = "请求失败";
+    alert(`发送失败: ${e}`);
   }
 }
 
@@ -181,8 +252,7 @@ promptInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendMess
 
 // ─── 初始化 ───────────────────────────────────────────
 applyTheme(themes[themeIndex]);
-appendMessage("chat", "监督系统已就绪。每5分钟自动检查一次，发现摸鱼立刻出手。有问题也可以直接问我。", "AI");
-addLog(`[${new Date().toLocaleTimeString("zh-CN",{hour12:false})}] 系统启动完成`);
+fetchChatHistory();
 fetchHistory();
 fetchState();
 setInterval(fetchState, 30000);
