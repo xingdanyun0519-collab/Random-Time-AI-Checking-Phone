@@ -181,8 +181,8 @@ promptInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendMess
 
 // ─── 初始化 ───────────────────────────────────────────
 applyTheme(themes[themeIndex]);
-appendMessage("chat", "监督系统已就绪。每10秒自动检查一次，发现摸鱼立刻出手。有问题也可以直接问我。", "AI");
+appendMessage("chat", "监督系统已就绪。每5分钟自动检查一次，发现摸鱼立刻出手。有问题也可以直接问我。", "AI");
 addLog(`[${new Date().toLocaleTimeString("zh-CN",{hour12:false})}] 系统启动完成`);
 fetchHistory();
 fetchState();
-setInterval(fetchState, 2000);
+setInterval(fetchState, 30000);
