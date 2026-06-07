@@ -39,10 +39,10 @@ function renderChat(messages) {
   const sorted = sortById(messages);
 
   for (const item of sorted) {
-    const role = item.role || "assistant";
-    const source = role === "user" ? "USER" : role === "system" ? "SYS" : "AI";
-    const isUser = source === "USER";
-    const isSys = source === "SYS";
+    const speaker = item.speaker || "ai";
+    const isUser = speaker === "user";
+    const isSys = speaker === "system";
+    const isAI = speaker === "ai" || speaker === "assistant";
 
     const wrapper = document.createElement("div");
     wrapper.className = `message ${isUser ? "right" : isSys ? "center" : "left"}`;
@@ -50,12 +50,12 @@ function renderChat(messages) {
 
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.textContent = `[${timeLabel(item.created_at)}] ${isUser ? "你" : isSys ? "系统" : "AI 助手"}`;
+    meta.textContent = `[${timeLabel(item.time)}] ${isUser ? "你" : isSys ? "系统" : "AI 助手"}`;
     if (isSys) meta.style.color = "#e74c3c";
 
     const bubble = document.createElement("div");
     bubble.className = "bubble";
-    bubble.textContent = item.content || "";
+    bubble.textContent = item.text || "";
 
     if (isSys) {
       bubble.style.background = "linear-gradient(135deg, #3d0f0f, #1e0808)";
@@ -141,16 +141,7 @@ async function fetchChatHistory() {
     const data = await res.json();
     chatCache = Array.isArray(data) ? data : [];
     renderChat(chatCache);
-  } catch (e) {
-    historyPreview.textContent = `读取失败: ${e}`;
-  }
-}
-
-async function fetchHistory() {
-  try {
-    const res = await fetch("/api/history");
-    const data = await res.json();
-    historyPreview.textContent = JSON.stringify(data, null, 2);
+    historyPreview.textContent = JSON.stringify(chatCache, null, 2);
   } catch (e) {
     historyPreview.textContent = `读取失败: ${e}`;
   }
@@ -224,7 +215,6 @@ async function sendMessage() {
   const text = promptInput.value.trim();
   if (!text) return;
 
-  addLog(`[${new Date().toLocaleTimeString("zh-CN",{hour12:false})}] 用户发送：${text}`);
   promptInput.value = "";
   serverState.textContent = "等待 AI 回复…";
 
@@ -237,7 +227,6 @@ async function sendMessage() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "请求失败");
     await reloadChat();
-    addLog(`[${new Date().toLocaleTimeString("zh-CN",{hour12:false})}] AI 回复：${(data.reply || "[空回复]").slice(0,60)}…`);
     serverState.textContent = "就绪";
   } catch (e) {
     serverState.textContent = "请求失败";
@@ -253,6 +242,5 @@ promptInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendMess
 // ─── 初始化 ───────────────────────────────────────────
 applyTheme(themes[themeIndex]);
 fetchChatHistory();
-fetchHistory();
 fetchState();
 setInterval(fetchState, 30000);

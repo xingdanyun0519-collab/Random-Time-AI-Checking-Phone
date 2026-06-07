@@ -239,15 +239,67 @@ def load_chat_history():
         with open(CHAT_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
             if isinstance(data, list):
-                return data
+                normalized = normalize_chat_history(data)
+                if normalized != data:
+                    save_chat_history(normalized)
+                return normalized
     except (OSError, json.JSONDecodeError):
         pass
     return []
 
 
 def save_chat_history(items):
+    normalized = normalize_chat_history(items)
     with open(CHAT_PATH, "w", encoding="utf-8") as f:
-        json.dump(items, f, ensure_ascii=False, indent=2)
+        json.dump(normalized, f, ensure_ascii=False, indent=2)
+
+
+def normalize_chat_record(item):
+    if not isinstance(item, dict):
+        return None
+
+    message_id = item.get("id")
+    if not isinstance(message_id, int):
+        return None
+
+    time_value = item.get("time") or item.get("created_at") or item.get("capture_time")
+    if not isinstance(time_value, str) or not time_value.strip():
+        time_value = datetime.now().strftime("%H:%M:%S")
+    else:
+        time_value = time_value.strip()
+        if " " in time_value:
+            time_value = time_value.split()[-1]
+
+    speaker = item.get("speaker")
+    if not speaker:
+        role = item.get("role")
+        if role == "user":
+            speaker = "user"
+        elif role == "system":
+            speaker = "ai"
+        else:
+            speaker = "ai"
+
+    text_value = item.get("text")
+    if text_value is None:
+        text_value = item.get("content", "")
+
+    return {
+        "id": message_id,
+        "time": time_value,
+        "speaker": speaker,
+        "text": str(text_value),
+    }
+
+
+def normalize_chat_history(items):
+    normalized = []
+    for item in items or []:
+        record = normalize_chat_record(item)
+        if record is not None:
+            normalized.append(record)
+    normalized.sort(key=lambda x: x.get("id", 0))
+    return normalized
 
 
 def next_chat_id(history):
@@ -255,15 +307,14 @@ def next_chat_id(history):
     return (max(numeric_ids) + 1) if numeric_ids else 1
 
 
-def append_chat_message(role, content, source="chat"):
+def append_chat_message(speaker, text):
     with CHAT_LOCK:
         history = load_chat_history()
         record = {
             "id": next_chat_id(history),
-            "role": role,
-            "content": content,
-            "source": source,
-            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "speaker": speaker,
+            "text": str(text),
         }
         history.append(record)
         save_chat_history(history)
@@ -278,23 +329,22 @@ def seed_chat_history():
         history.append(
             {
                 "id": 1,
-                "role": "assistant",
-                "content": "监督系统已就绪。需要我看着你学习，或者你也可以直接问我。",
-                "source": "seed",
-                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "speaker": "ai",
+                "text": "监督系统已就绪。需要我看着你学习，或者你也可以直接问我。",
             }
         )
         save_chat_history(history)
 
 
-def update_chat_message(message_id, content):
+def update_chat_message(message_id, text):
     with CHAT_LOCK:
         history = load_chat_history()
         changed = False
         for item in history:
             if isinstance(item, dict) and item.get("id") == message_id:
-                item["content"] = content
-                item["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                item["text"] = str(text)
+                item["time"] = item.get("time") or datetime.now().strftime("%H:%M:%S")
                 changed = True
                 break
         if changed:
@@ -372,9 +422,12 @@ def call_ai_chat(user_message):
 
     messages = [{"role": "system", "content": system_with_history}]
     messages.extend(
-        {"role": item.get("role", "user"), "content": item.get("content", "")}
+        {
+            "role": "user" if item.get("speaker") == "user" else "assistant",
+            "content": item.get("text", ""),
+        }
         for item in history_snapshot
-        if isinstance(item, dict) and item.get("content")
+        if isinstance(item, dict) and item.get("text")
     )
     messages.append({"role": "user", "content": user_message})
 
@@ -385,8 +438,8 @@ def call_ai_chat(user_message):
     )
     reply = (response.choices[0].message.content or "").strip() or "[空回复]"
 
-    append_chat_message("user", user_message, source="chat")
-    append_chat_message("assistant", reply, source="ai")
+    append_chat_message("user", user_message)
+    append_chat_message("ai", reply)
 
     return reply
 
@@ -504,7 +557,7 @@ def push_sys_message(text):
     with STATE_LOCK:
         APP_STATE["sys_msg_id"] += 1
         APP_STATE["sys_msg_text"] = text
-    append_chat_message("system", text, source="system")
+    append_chat_message("ai", text)
 
 
 def get_state_snapshot():
@@ -596,10 +649,12 @@ def automation_loop():
             # Step 3: 无文字 = 手机没开机/无内容，按学习态处理
             if is_no_text_ocr_result(ocr_text):
                 next_interval_seconds = NO_TEXT_NEXT_CHECK_SECONDS
+                no_text_message = f"手机没开机或无内容，{next_interval_seconds} 秒后再看"
+                append_chat_message("ai", no_text_message)
                 update_state(
                     "status",
-                    f"手机没开机或无内容，{next_interval_seconds} 秒后再看",
-                    terminal_line(f"OCR无文字：手机没开机或无内容，{next_interval_seconds} 秒后再看"),
+                    no_text_message,
+                    terminal_line(f"OCR无文字：{no_text_message}"),
                 )
                 continue
 
@@ -612,6 +667,7 @@ def automation_loop():
             update_state("judge", judge_reply, terminal_line(f"判断：{judge_reply.splitlines()[0]}"))
 
             if is_studying:
+                append_chat_message("ai", user_message)
                 update_state(
                     "status",
                     f"用户在学习，{next_interval_seconds} 秒后再看",
