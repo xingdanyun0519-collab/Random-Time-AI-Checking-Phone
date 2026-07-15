@@ -15,6 +15,7 @@ const sendBtn = document.getElementById("sendNormal");
 const historyPreview = document.getElementById("historyPreview");
 const serverState = document.getElementById("serverState");
 const themeToggle = document.getElementById("themeToggle");
+const themeHint = document.getElementById("themeHint");
 const decisionLog = document.getElementById("decisionLog");
 
 // ─── 状态追踪 ─────────────────────────────────────────
@@ -236,6 +237,9 @@ async function sendMessage() {
 
 // ─── 事件绑定 ─────────────────────────────────────────
 themeToggle.addEventListener("click", cycleTheme);
+if (themeHint) {
+  themeHint.addEventListener("click", cycleTheme);
+}
 sendBtn.addEventListener("click", sendMessage);
 promptInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendMessage(); });
 

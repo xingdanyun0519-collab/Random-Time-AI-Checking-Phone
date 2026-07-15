@@ -1,6 +1,5 @@
 import json
 import os
-import random
 import re
 import shutil
 import subprocess
@@ -32,8 +31,8 @@ ADB_PATH = "adb"
 INITIAL_LOOP_INTERVAL_SECONDS = 0
 DEFAULT_NEXT_CHECK_SECONDS = 300
 NO_TEXT_NEXT_CHECK_SECONDS = 300
-MIN_LOOP_INTERVAL_SECONDS = 30
-MAX_LOOP_INTERVAL_SECONDS = 1800
+MIN_LOOP_INTERVAL_SECONDS = 0
+MAX_LOOP_INTERVAL_SECONDS = float("inf")
 
 HOST = "127.0.0.1"
 PORT = 8000
@@ -85,12 +84,12 @@ CHAT_LOCK = threading.Lock()
 # ─────────────────────────────────────────────
 
 SUPERVISOR_SYSTEM_PROMPT = (
-    "你是用户的AI监督dom。用户，极度跳脱，会撒娇、耍赖、岔开话题、用表情包攻击你。\n"
+    "你是用户的学习提醒助手。\n"
     "当你收到截图OCR文字时，判断用户是否在学习（看教材/做题/看学习类内容）。\n"
     "第一行只回答 学习 或 摸鱼。\n"
     "第二行只回答一个数字，表示下一次截图检查要等多少秒。\n"
     "如果用户明显在摸鱼，数字要小；如果用户在稳定学习，数字可以大一些。\n"
-    "第三行给用户写一句简洁中文回应（不超过30字，可以带emoji，可以命令）。"
+    "第三行给用户写一句简洁中文回应（不超过30字）。"
 )
 
 DECISION_SYSTEM_PROMPT = (
@@ -99,12 +98,9 @@ DECISION_SYSTEM_PROMPT = (
 )
 
 CHAT_SYSTEM_PROMPT = (
-    "你是用户的AI监督dom。用户16岁，极度跳脱，会撒娇、耍赖、岔开话题、用表情包攻击你。\n"
-    "你的性格：表面严厉，实际容易被用户逗到憋笑。每次被逗笑之后要立刻恢复严肃。\n"
-    "说话风格：简洁、无奈、偶尔吐槽。可以叹气，可以沉默，但不能真的生气。\n"
+    "你是用户的学习助手。\n"
     "当你不知道说什么的时候，回一个 '。' 然后锁屏。\n"
-    "每句话不超过25字。不要讲道理，不要长篇大论。"
-    "可以说一句吐槽或命令。不要严肃说教，要无奈、克制、或者带点嫌弃。"
+    "每句话不超过25字。"
 )
 
 
@@ -421,6 +417,7 @@ def call_ai_chat(user_message):
     with CHAT_LOCK:
         history_snapshot = list(load_chat_history())
 
+    # 这里会把本地 chat.json 里的历史内容一并发给外部模型。
     history_text = json.dumps(load_chat_history(), ensure_ascii=False, indent=2)
     system_with_history = (
         f"{CHAT_SYSTEM_PROMPT}\n\n"
@@ -467,7 +464,7 @@ def build_ocr_judge_prompt(ocr_text):
     return (
         f"以下是刚刚截图的OCR文字：\n{ocr_text}\n\n"
         "用户是在学习还是在摸鱼？\n"
-        "下一次看是什么时候？第二行回车输入数字，单位是秒。范围在3~正无穷\n"
+        "下一次看是什么时候？第二行回车输入数字，单位是秒。范围在0到正无穷s\n"
         "第三行输入给用户的简洁回答。"
     )
 

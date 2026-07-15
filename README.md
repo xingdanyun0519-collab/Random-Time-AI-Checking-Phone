@@ -6,14 +6,14 @@
 
 - Randomly capture screenshots via ADB.
 - Use AI to judge whether you are studying or playing games.
-- Support HTTP online chatting.
+- Support HTTP chat.
 
 ## ❓ How It Works
 
-1. Set up ADB and connect your phone to your computer (via USB or Wi-Fi debugging).
-2. Fill in the config fields in `app.py` (OCR path & API Key).
+1. Set up ADB and connect your phone to your computer via USB or Wi-Fi debugging.
+2. Fill in the config fields in `app.py` (OCR path and API key).
 3. Run `app.py`.
-4. Done! Now you can chat online and manage your screen time.
+4. Done. Now you can chat online and manage your screen time.
 
 ## 🛠 Requirements
 
@@ -21,9 +21,9 @@
 |------|------|
 | Python | 3.x |
 | ADB | Android Debug Bridge |
-| Offline OCR | to read text from screenshots |
-| API Key | for calling the AI model |
-| A computer & a target phone | ... |
+| Offline OCR | Reads text from screenshots |
+| API key | Calls the AI model |
+| A computer and a target phone | Controls your phone |
 
 ## 🚀 Quick Start
 
@@ -37,8 +37,8 @@ python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 
 # 3. Configure settings in app.py
-#    OCR_EXE_PATH → path to your offline OCR tool (e.g. Umi-OCR)
-#    DEEPSEEK_API_KEY → your API key (lines 35-37)
+#    OCR_EXE_PATH -> path to your offline OCR tool (for example Umi-OCR)
+#    DEEPSEEK_API_KEY -> your API key
 ```
 
 ### Run
@@ -63,9 +63,12 @@ python -m venv .venv
 
 ## 📝 Notes
 
-- OCR only captures text from the screen — it does not record images.
-- ...
+- OCR only captures text from the screen. It does not record images.
+- When you change OCR tools, update `OCR_COMMAND` near the top of `app.py`.
+- To force-close apps, edit `NON_STUDY_PACKAGES` in `app.py`.
+- This project sends OCR text and chat history to the AI API, so avoid putting private content into chats if you do not want it processed remotely.
 
 ---
 
-*Just for personal studying*
+*For personal study only*
+

@@ -1,5 +1,6 @@
 :root {
   --bg: #202124;
+  --bg-2: #111214;
   --bg-accent: rgba(255, 255, 255, 0.05);
   --surface: rgba(34, 36, 40, 0.84);
   --surface-strong: rgba(45, 48, 54, 0.94);
@@ -18,38 +19,43 @@
 }
 
 body.theme-blue {
-  --bg: #202124;
-  --bg-accent: rgba(255, 255, 255, 0.05);
-  --accent: #111111;
-  --glow: rgba(255, 255, 255, 0.12);
+  --bg: #13253d;
+  --bg-2: #08111f;
+  --bg-accent: rgba(82, 146, 255, 0.16);
+  --accent: #4e97ff;
+  --glow: rgba(82, 146, 255, 0.22);
 }
 
 body.theme-gray {
-  --bg: #1f2125;
-  --bg-accent: rgba(255, 255, 255, 0.045);
-  --accent: #0f0f0f;
-  --glow: rgba(255, 255, 255, 0.1);
+  --bg: #292c31;
+  --bg-2: #101215;
+  --bg-accent: rgba(255, 255, 255, 0.05);
+  --accent: #151515;
+  --glow: rgba(255, 255, 255, 0.11);
 }
 
 body.theme-green {
-  --bg: #1f2520;
-  --bg-accent: rgba(255, 255, 255, 0.04);
-  --accent: #111111;
-  --glow: rgba(255, 255, 255, 0.1);
+  --bg: #123326;
+  --bg-2: #09120d;
+  --bg-accent: rgba(87, 198, 141, 0.16);
+  --accent: #53d18f;
+  --glow: rgba(87, 198, 141, 0.2);
 }
 
 body.theme-orange {
-  --bg: #252220;
-  --bg-accent: rgba(255, 255, 255, 0.04);
-  --accent: #111111;
-  --glow: rgba(255, 255, 255, 0.1);
+  --bg: #3a2311;
+  --bg-2: #16100b;
+  --bg-accent: rgba(255, 164, 78, 0.16);
+  --accent: #ff9f57;
+  --glow: rgba(255, 164, 78, 0.2);
 }
 
 body.theme-pink {
-  --bg: #252126;
-  --bg-accent: rgba(255, 255, 255, 0.04);
-  --accent: #111111;
-  --glow: rgba(255, 255, 255, 0.1);
+  --bg: #39182b;
+  --bg-2: #150b11;
+  --bg-accent: rgba(255, 113, 170, 0.16);
+  --accent: #ff76b1;
+  --glow: rgba(255, 113, 170, 0.2);
 }
 
 * {
@@ -66,7 +72,7 @@ body {
   color: var(--text);
   background:
     radial-gradient(circle at top, rgba(255,255,255,0.06), transparent 38%),
-    linear-gradient(180deg, var(--bg), #111214 100%);
+    linear-gradient(180deg, var(--bg), var(--bg-2) 100%);
   overflow-x: hidden;
 }
 
@@ -129,11 +135,20 @@ body::after {
 }
 
 .theme-hint {
+  appearance: none;
+  border: 0;
+  background: transparent;
   font-family: "Cascadia Mono", "Consolas", monospace;
   font-size: 12px;
   letter-spacing: 0.14em;
   color: var(--muted);
   text-transform: uppercase;
+  cursor: pointer;
+  padding: 0;
+}
+
+.theme-hint:hover {
+  color: var(--text);
 }
 
 .logo-core,
