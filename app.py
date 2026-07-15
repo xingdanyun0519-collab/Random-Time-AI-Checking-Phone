@@ -13,13 +13,20 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 from openai import OpenAI
 
-WORKSPACE_DIR = r"C:\Users\Administrator\Desktop\p"
+WORKSPACE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(WORKSPACE_DIR, "web")
 HISTORY_PATH = os.path.join(WORKSPACE_DIR, "history.json")
 CHAT_PATH = os.path.join(WORKSPACE_DIR, "chat.json")
 SCREENSHOT_PATH = os.path.join(WORKSPACE_DIR, "screen.png")
-OCR_EXE_PATH = r"C:\Users\Administrator\Desktop\Umi-OCR_Rapid_v2.1.5\Umi-OCR.exe"
+OCR_EXE_PATH = r"#填写你的ocr路径"
 OCR_OUTPUT_PATH = os.path.join(WORKSPACE_DIR, "ocr_result.txt")
+
+# OCR 命令模板（换 OCR 工具时改这里即可）
+# 占位符: {exe} → OCR_EXE_PATH, {input} → 截图路径, {output} → 结果文件路径
+# Umi-OCR  :  '"{exe}" --path "{input}" --output "{output}"'
+# Tesseract:  '"{exe}" "{input}" "{output}" -l chi_sim'
+# 如果工具直接输出到 stdout，将 {output} 留空即可
+OCR_COMMAND = '"{exe}" --path "{input}" --output "{output}"'
 
 ADB_PATH = "adb"
 INITIAL_LOOP_INTERVAL_SECONDS = 0
@@ -33,7 +40,7 @@ PORT = 8000
 BASE_URL = f"http://{HOST}:{PORT}"
 
 MODEL_NAME = "deepseek-chat"
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "sk-3f7d3786669d4a88be6566e78b519840")
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "xxxxxxxxx")
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 ADB_SERIAL = None
@@ -460,7 +467,7 @@ def build_ocr_judge_prompt(ocr_text):
     return (
         f"以下是刚刚截图的OCR文字：\n{ocr_text}\n\n"
         "用户是在学习还是在摸鱼？\n"
-        "下一次看是什么时候？第二行回车输入数字，单位是秒。\n"
+        "下一次看是什么时候？第二行回车输入数字，单位是秒。范围在3~正无穷\n"
         "第三行输入给用户的简洁回答。"
     )
 
@@ -500,6 +507,7 @@ def take_screenshot():
 
 
 def perform_ocr():
+    """通用 OCR 调用：用 OCR_COMMAND 模板拼命令，优先读输出文件，兜底读 stdout"""
     if not os.path.exists(OCR_EXE_PATH):
         return ""
     if not os.path.exists(SCREENSHOT_PATH) or os.path.getsize(SCREENSHOT_PATH) == 0:
@@ -509,8 +517,9 @@ def perform_ocr():
             os.remove(OCR_OUTPUT_PATH)
     except OSError:
         pass
-    command = f'"{OCR_EXE_PATH}" --path "{SCREENSHOT_PATH}" --output "{OCR_OUTPUT_PATH}"'
+    command = OCR_COMMAND.format(exe=OCR_EXE_PATH, input=SCREENSHOT_PATH, output=OCR_OUTPUT_PATH)
     ocr_console = run_command(command, capture_output=True)
+    # 优先读输出文件
     if os.path.exists(OCR_OUTPUT_PATH):
         try:
             with open(OCR_OUTPUT_PATH, "r", encoding="utf-8") as f:
@@ -519,14 +528,16 @@ def perform_ocr():
                 return text
         except OSError:
             pass
+    # 兜底：读 stdout
     return (ocr_console or "").strip()
 
 
 def is_no_text_ocr_result(ocr_text):
+    """判断 OCR 是否返回了有效文字"""
     text = (ocr_text or "").strip()
     if not text:
         return True
-    return text == "[Message] No text in OCR result."
+    return False
 
 
 def kill_non_study_apps():

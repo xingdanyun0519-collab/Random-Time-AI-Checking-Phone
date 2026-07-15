@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Android SDK platform-tools (download separately)
+adb.exe
+AdbWinApi.dll
+AdbWinUsbApi.dll
+fastboot.exe
+etc1tool.exe
+hprof-conv.exe
+make_f2fs.exe
+make_f2fs_casefold.exe
+mke2fs.exe
+mke2fs.conf
+sqlite3.exe
+libwinpthread-1.dll
+
+# Temp / output files
+screen.png
+ocr_result.txt
+
+# Personal data
+chat.json
+history.json
+
+# OS
+Thumbs.db
+.DS_Store
